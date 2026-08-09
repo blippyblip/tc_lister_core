@@ -11,6 +11,8 @@ const TYPES = {
   '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.svg': 'image/svg+xml',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.gif': 'image/gif',
   '.md': 'text/markdown', '.glb': 'model/gltf-binary', '.gltf': 'model/gltf+json',
+  '.pdf': 'application/pdf', '.webp': 'image/webp', '.tif': 'image/tiff',
+  '.tiff': 'image/tiff', '.tga': 'image/x-tga',
 };
 
 http.createServer((req, res) => {
