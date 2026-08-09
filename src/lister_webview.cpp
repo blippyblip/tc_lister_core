@@ -100,6 +100,47 @@ static void log_line(const wchar_t *fmt, ...) {
     CloseHandle(f);
 }
 
+static std::wstring local_app_data() {
+    wchar_t buf[MAX_PATH];
+    DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
+    return (n == 0 || n >= MAX_PATH) ? std::wstring() : buf;
+}
+
+static int setting(const std::wstring &dir, const wchar_t *key, int fallback) {
+    if (dir.empty()) return fallback;
+    return GetPrivateProfileIntW(L"lister", key, fallback, (dir + L"\\config.ini").c_str());
+}
+
+// Written once so the file is there to be found and edited; GetPrivateProfileInt
+// would fall back to the same defaults without it.
+static void seed_config() {
+    std::wstring dir = user_data_dir();
+    if (dir.empty()) return;
+
+    std::wstring path = dir + L"\\config.ini";
+    HANDLE f = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
+                           FILE_ATTRIBUTE_NORMAL, nullptr);
+    if (f == INVALID_HANDLE_VALUE) return;
+
+    static const char text[] =
+        "; Settings for this plugin. Delete a line to go back to its default.\r\n"
+        "; A file at %LOCALAPPDATA%\\tc_lister\\config.ini sets the default for\r\n"
+        "; every plugin in the family; this one overrides it for this plugin.\r\n"
+        "\r\n"
+        "[lister]\r\n"
+        "; Take the keyboard focus when the pane opens, so the first key works\r\n"
+        "; without clicking into it. Never applies to quick view.\r\n"
+        "TakeFocus=1\r\n";
+    DWORD written;
+    WriteFile(f, text, sizeof text - 1, &written, nullptr);
+    CloseHandle(f);
+}
+
+static bool take_focus_setting() {
+    int shared = setting(local_app_data() + L"\\tc_lister", L"TakeFocus", 1);
+    return setting(user_data_dir(), L"TakeFocus", shared) != 0;
+}
+
 static std::string to_utf8(const std::wstring &s) {
     int n = WideCharToMultiByte(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0, nullptr, nullptr);
     if (n <= 0) return std::string();
@@ -412,7 +453,7 @@ static void attach_webview(HWND hwnd, ICoreWebView2Controller *ctrl, ICoreWebVie
 
     // Lister hands the window no focus of its own, so without this the first
     // keystroke goes nowhere and every pane needs a click before it responds.
-    if (inside_lister_window(GetParent(hwnd))) {
+    if (take_focus_setting() && inside_lister_window(GetParent(hwnd))) {
         SetFocus(hwnd);
         ctrl->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
     }
@@ -511,6 +552,12 @@ void __stdcall ListGetDetectString(char *DetectString, int maxlen) {
 HWND __stdcall ListLoadW(HWND ParentWin, WCHAR *FileToLoad, int ShowFlags) try {
     if (!ParentWin || !FileToLoad || !*FileToLoad) return nullptr;
     if (!register_window_class()) return nullptr;
+
+    static bool seeded = false;
+    if (!seeded) {
+        seed_config();
+        seeded = true;
+    }
 
     HWND hwnd = create_view_window(ParentWin);
     if (!hwnd) return nullptr;
