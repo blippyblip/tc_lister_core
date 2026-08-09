@@ -226,11 +226,9 @@ static void take_focus(ICoreWebView2Controller *ctrl, HWND hwnd) {
     SetFocus(hwnd);
     ctrl->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
 
-    static int logged = 0;
-    if (logged < 6) {
-        logged++;
-        log_line(L"focus %s -> %s (ours %d)", before.c_str(), window_class(GetFocus()).c_str(),
-                 (int)focus_is_ours(hwnd));
+    // Only worth a line when it did not work; the retry below covers the rest.
+    if (!focus_is_ours(hwnd)) {
+        log_line(L"focus stayed on %s, wanted this pane", before.c_str());
     }
 }
 
