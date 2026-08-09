@@ -425,6 +425,8 @@ static void forward_escape(ICoreWebView2Controller *ctrl, HWND hwnd) {
 }
 
 static void mirror_title(ICoreWebView2 *web, HWND hwnd) {
+    if (!lister_config.page) return;   // the file's own title is not a status
+
     EventRegistrationToken tok;
     web->add_DocumentTitleChanged(
         Callback<ICoreWebView2DocumentTitleChangedEventHandler>(
@@ -435,6 +437,28 @@ static void mirror_title(ICoreWebView2 *web, HWND hwnd) {
                 if (g_live.count(hwnd)) SetWindowTextW(hwnd, title);
                 if (wcsncmp(title, L"err:", 4) == 0) log_line(L"%s", title);
                 CoTaskMemFree(title);
+                return S_OK;
+            })
+            .Get(),
+        &tok);
+}
+
+// With no viewer page there is nothing to set a status title, so the host says
+// what happened instead - the test host reads the same window text either way.
+static void report_result(ICoreWebView2 *web, HWND hwnd, const std::wstring &name) {
+    EventRegistrationToken tok;
+    web->add_NavigationCompleted(
+        Callback<ICoreWebView2NavigationCompletedEventHandler>(
+            [hwnd, name](ICoreWebView2 *, ICoreWebView2NavigationCompletedEventArgs *a) -> HRESULT {
+                if (!g_live.count(hwnd)) return S_OK;
+
+                BOOL ok = FALSE;
+                a->get_IsSuccess(&ok);
+
+                wchar_t text[512];
+                StringCchPrintfW(text, ARRAYSIZE(text), ok ? L"ok: %s" : L"err: could not open %s",
+                                 name.c_str());
+                SetWindowTextW(hwnd, text);
                 return S_OK;
             })
             .Get(),
@@ -470,7 +494,7 @@ static void log_failures(ICoreWebView2 *web) {
 
 static void attach_webview(HWND hwnd, ICoreWebView2Controller *ctrl, ICoreWebView2Environment *env,
                            const std::wstring &assets, const std::wstring &folder,
-                           const std::wstring &url) {
+                           const std::wstring &url, const std::wstring &name) {
     view *v = (view *)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
     if (!v) {
         ctrl->Close();
@@ -492,6 +516,7 @@ static void attach_webview(HWND hwnd, ICoreWebView2Controller *ctrl, ICoreWebVie
     contain_requests(web.Get(), env);
     forward_escape(ctrl, hwnd);
     mirror_title(web.Get(), hwnd);
+    if (!lister_config.page) report_result(web.Get(), hwnd, name);
     log_failures(web.Get());
 
     HRESULT nav = web->Navigate(url.c_str());
@@ -519,7 +544,12 @@ static void attach_webview(HWND hwnd, ICoreWebView2Controller *ctrl, ICoreWebVie
         &tok);
 }
 
+// With no page of its own a plugin hands the file straight to the browser, which
+// is what the PDF viewer needs: as a framed document it never takes the keyboard
+// focus without being clicked, and as the top-level one it always does.
 static std::wstring page_url(const std::wstring &name, bool dark) {
+    if (!lister_config.page) return file_origin() + url_encode(name);
+
     return asset_origin() + lister_config.page + L"?theme=" + (dark ? L"dark" : L"light") +
            L"&src=" + url_encode(file_origin() + name);
 }
@@ -535,7 +565,7 @@ static bool start_webview(HWND hwnd, const std::wstring &file, bool dark) {
     std::wstring assets = plugin_dir() + L"\\web";
     std::wstring url = page_url(name, dark);
 
-    auto on_environment = [hwnd, assets, folder, url](HRESULT hr, ICoreWebView2Environment *env) -> HRESULT {
+    auto on_environment = [hwnd, assets, folder, url, name](HRESULT hr, ICoreWebView2Environment *env) -> HRESULT {
         if (FAILED(hr) || !env) {
             log_line(L"environment creation 0x%08X", hr);
             return S_OK;
@@ -543,8 +573,8 @@ static bool start_webview(HWND hwnd, const std::wstring &file, bool dark) {
         if (!g_live.count(hwnd)) return S_OK;
 
         ComPtr<ICoreWebView2Environment> owned = env;
-        auto on_controller = [hwnd, owned, assets, folder, url](HRESULT hr,
-                                                                ICoreWebView2Controller *ctrl) -> HRESULT {
+        auto on_controller = [hwnd, owned, assets, folder, url, name](HRESULT hr,
+                                                                      ICoreWebView2Controller *ctrl) -> HRESULT {
             if (FAILED(hr) || !ctrl) {
                 log_line(L"controller creation 0x%08X", hr);
                 return S_OK;
@@ -553,7 +583,7 @@ static bool start_webview(HWND hwnd, const std::wstring &file, bool dark) {
                 ctrl->Close();
                 return S_OK;
             }
-            attach_webview(hwnd, ctrl, owned.Get(), assets, folder, url);
+            attach_webview(hwnd, ctrl, owned.Get(), assets, folder, url, name);
             return S_OK;
         };
 

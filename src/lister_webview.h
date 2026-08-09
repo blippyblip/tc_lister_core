@@ -8,6 +8,11 @@
 //   https://<asset_host>/<page>?theme=dark|light&src=https%3A%2F%2F<file_host>%2F<name>
 //
 // and reports its result by setting document.title to "ok: …" or "err: …".
+//
+// A null `page` means the file is opened directly instead, with no viewer page
+// around it, and the host reports the result itself. That is for formats the
+// browser already displays whole - a framed one never takes the keyboard focus
+// until it is clicked.
 struct lister_plugin {
     const wchar_t *window_class;
     const wchar_t *data_dir;
