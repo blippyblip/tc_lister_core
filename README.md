@@ -23,7 +23,7 @@ Used as a submodule at `core/` by
 #include "lister_webview.h"
 
 const lister_plugin lister_config = {
-    L"MdListerWnd",       // window class, unique per DLL
+    L"TcListerMdWnd",     // window class, unique per DLL
     L"tc_lister_md",      // %LOCALAPPDATA% folder for the WebView2 profile and log
     L"md-assets.invalid", // virtual host for the plugin's web\ folder
     L"md-file.invalid",   // virtual host for the previewed file's folder
