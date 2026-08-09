@@ -226,7 +226,18 @@ static bool on_our_hosts(const std::wstring &uri) {
 // stops every request that leaves the two virtual hosts at the host instead, so
 // containment does not depend on the previewed file cooperating.
 static void contain_requests(ICoreWebView2 *web, ICoreWebView2Environment *env) {
-    web->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+    // The original filter only covers the top-level document, which would leave
+    // everything a framed file asks for unchecked - exactly the case that needs
+    // this most. ICoreWebView2_22 is what widens it to every frame.
+    ComPtr<ICoreWebView2_22> web22;
+    if (SUCCEEDED(web->QueryInterface(IID_PPV_ARGS(&web22)))) {
+        web22->AddWebResourceRequestedFilterWithRequestSourceKinds(
+            L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL,
+            COREWEBVIEW2_WEB_RESOURCE_REQUEST_SOURCE_KINDS_ALL);
+    } else {
+        log_line(L"WebView2 runtime is too old to filter framed requests");
+        web->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+    }
 
     ComPtr<ICoreWebView2Environment> owned = env;
     EventRegistrationToken tok;
