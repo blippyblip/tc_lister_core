@@ -18,6 +18,7 @@ static std::set<HWND> g_live;
 
 struct view {
     ComPtr<ICoreWebView2Controller> controller;
+    int focus_tries = 0;
 };
 
 static std::wstring dir_of(const std::wstring &path) {
@@ -207,10 +208,38 @@ static void log_host_window(HWND parent) {
     log_line(L"host window class %s", cls);
 }
 
+static std::wstring window_class(HWND hwnd) {
+    wchar_t cls[64] = {0};
+    if (hwnd) GetClassNameW(hwnd, cls, ARRAYSIZE(cls));
+    return hwnd ? cls : L"(none)";
+}
+
+// Whether the focus has landed anywhere inside the WebView2, which parents its
+// own child windows under ours.
+static bool focus_is_ours(HWND hwnd) {
+    HWND focus = GetFocus();
+    return focus && (focus == hwnd || IsChild(hwnd, focus));
+}
+
 static void take_focus(ICoreWebView2Controller *ctrl, HWND hwnd) {
+    std::wstring before = window_class(GetFocus());
     SetFocus(hwnd);
     ctrl->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+
+    static int logged = 0;
+    if (logged < 6) {
+        logged++;
+        log_line(L"focus %s -> %s (ours %d)", before.c_str(), window_class(GetFocus()).c_str(),
+                 (int)focus_is_ours(hwnd));
+    }
 }
+
+// Lister decides where the focus goes on its own schedule, and whatever it does
+// after the pane is set up would undo a single attempt. Rather than guess at its
+// order, the focus is retaken a few times over the first half second and the
+// timer stops as soon as it has stuck.
+#define FOCUS_TIMER 2
+#define FOCUS_TRIES 5
 
 static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     view *v = (view *)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
@@ -222,6 +251,16 @@ static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
             v->controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
         }
         return 0;
+    case WM_TIMER:
+        if (wp == FOCUS_TIMER) {
+            if (!v || !v->controller || ++v->focus_tries > FOCUS_TRIES || focus_is_ours(hwnd)) {
+                KillTimer(hwnd, FOCUS_TIMER);
+            } else {
+                take_focus(v->controller.Get(), hwnd);
+            }
+            return 0;
+        }
+        break;
     case WM_SIZE:
         if (v && v->controller) {
             RECT r;
@@ -466,6 +505,7 @@ static void attach_webview(HWND hwnd, ICoreWebView2Controller *ctrl, ICoreWebVie
     if (!take_focus_setting()) return;
 
     take_focus(ctrl, hwnd);
+    SetTimer(hwnd, FOCUS_TIMER, 100, nullptr);
 
     ComPtr<ICoreWebView2Controller> keep = ctrl;
     EventRegistrationToken tok;
