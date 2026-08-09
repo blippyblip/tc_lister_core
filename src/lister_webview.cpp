@@ -152,9 +152,12 @@ static bool use_dark_theme(int show_flags) {
     return mode == 1 || (mode == 2 && system_prefers_dark());
 }
 
-// F3 puts the plugin in a Lister window of its own; Ctrl+Q puts it in Total
-// Commander's quick view panel, where the file list must keep the focus or the
-// arrow keys stop moving between files. Only the first is ours to take.
+// F3 puts the plugin in a Lister window of its own, where taking the focus is
+// what makes the first keystroke work. Ctrl+Q puts it in a panel inside Total
+// Commander's main window, where the file list must keep the focus or the arrow
+// keys stop moving between files. ShowFlags does not say which of the two this
+// is, but the top-level window does. Written as "anywhere except the main
+// window" so an unrecognised Lister still gets the focus.
 static bool inside_lister_window(HWND parent) {
     HWND root = GetAncestor(parent, GA_ROOT);
     wchar_t cls[64] = {0};
@@ -165,7 +168,7 @@ static bool inside_lister_window(HWND parent) {
         log_line(L"host window class %s", cls);
         logged = true;
     }
-    return wcscmp(cls, L"TLister") == 0;
+    return wcsncmp(cls, L"TTOTAL_CMD", 10) != 0;
 }
 
 static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
