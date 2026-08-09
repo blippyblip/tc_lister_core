@@ -33,15 +33,25 @@ if not exist "%ROOT%vendor\wv2\build\native\include\WebView2.h" (
   exit /b 1
 )
 
-rem Total Commander keeps a Lister plugin loaded for the life of the process, so
-rem it must not be pointed at this build tree - install from the zip into TC's own
-rem plugins folder instead.
+rem Total Commander keeps a loaded plugin's DLL mapped for the life of the
+rem process, which blocks writing to it - but not renaming it. Moving the old one
+rem out of the way lets the build succeed with TC still open; the file it has
+rem mapped stays valid until TC next restarts, and is deleted by a later build.
+del /Q "%ROOT%out\aside-*.wlx64" >nul 2>&1
 if exist "%ROOT%out\stage\%NAME%.wlx64" (
-  2>nul ( type nul >>"%ROOT%out\stage\%NAME%.wlx64" ) || (
-    echo out\stage\%NAME%.wlx64 is locked - close Total Commander and retry.
-    exit /b 1
-  )
+  2>nul ( type nul >>"%ROOT%out\stage\%NAME%.wlx64" ) || goto :setaside
 )
+goto :staged
+
+:setaside
+echo Note: %NAME%.wlx64 is loaded by Total Commander - setting the old one aside.
+move /Y "%ROOT%out\stage\%NAME%.wlx64" "%ROOT%out\aside-%NAME%-%RANDOM%.wlx64" >nul 2>&1
+if exist "%ROOT%out\stage\%NAME%.wlx64" (
+  echo Could not replace out\stage\%NAME%.wlx64 - close Total Commander and retry.
+  exit /b 1
+)
+
+:staged
 
 if exist "%ROOT%out\stage" rmdir /S /Q "%ROOT%out\stage"
 mkdir "%ROOT%out\stage" || exit /b 1
