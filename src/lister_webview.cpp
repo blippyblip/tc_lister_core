@@ -193,28 +193,35 @@ static bool use_dark_theme(int show_flags) {
     return mode == 1 || (mode == 2 && system_prefers_dark());
 }
 
-// F3 puts the plugin in a Lister window of its own, where taking the focus is
-// what makes the first keystroke work. Ctrl+Q puts it in a panel inside Total
-// Commander's main window, where the file list must keep the focus or the arrow
-// keys stop moving between files. ShowFlags does not say which of the two this
-// is, but the top-level window does. Written as "anywhere except the main
-// window" so an unrecognised Lister still gets the focus.
-static bool inside_lister_window(HWND parent) {
-    HWND root = GetAncestor(parent, GA_ROOT);
-    wchar_t cls[64] = {0};
-    GetClassNameW(root, cls, ARRAYSIZE(cls));
-
+// Quick view returns the focus to the file list itself - that is Total
+// Commander's own behaviour, not something the plugin has to arrange - so the
+// focus is simply taken and TC decides whether to keep it. The host window class
+// is logged because it is the first thing worth knowing if that stops holding.
+static void log_host_window(HWND parent) {
     static bool logged = false;
-    if (!logged) {
-        log_line(L"host window class %s", cls);
-        logged = true;
-    }
-    return wcsncmp(cls, L"TTOTAL_CMD", 10) != 0;
+    if (logged) return;
+    logged = true;
+
+    wchar_t cls[64] = {0};
+    GetClassNameW(GetAncestor(parent, GA_ROOT), cls, ARRAYSIZE(cls));
+    log_line(L"host window class %s", cls);
+}
+
+static void take_focus(ICoreWebView2Controller *ctrl, HWND hwnd) {
+    SetFocus(hwnd);
+    ctrl->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
 }
 
 static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     view *v = (view *)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
     switch (msg) {
+    case WM_SETFOCUS:
+        // Whoever hands this window the focus means the browser in it, not the
+        // bare child window, which would swallow every key.
+        if (v && v->controller) {
+            v->controller->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+        }
+        return 0;
     case WM_SIZE:
         if (v && v->controller) {
             RECT r;
@@ -452,20 +459,24 @@ static void attach_webview(HWND hwnd, ICoreWebView2Controller *ctrl, ICoreWebVie
     if (FAILED(nav)) log_line(L"Navigate 0x%08X", nav);
 
     // Lister hands the window no focus of its own, so without this the first
-    // keystroke goes nowhere and every pane needs a click before it responds.
-    bool wanted = take_focus_setting();
-    bool lister = inside_lister_window(GetParent(hwnd));
+    // keystroke goes nowhere and the pane needs a click before it responds.
+    // Taken twice: once now, and again once the page has loaded, since anything
+    // the host does with the focus in between would otherwise win.
+    log_host_window(GetParent(hwnd));
+    if (!take_focus_setting()) return;
 
-    static bool logged = false;
-    if (!logged) {
-        log_line(L"TakeFocus %d, own lister window %d", (int)wanted, (int)lister);
-        logged = true;
-    }
+    take_focus(ctrl, hwnd);
 
-    if (wanted && lister) {
-        SetFocus(hwnd);
-        ctrl->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
-    }
+    ComPtr<ICoreWebView2Controller> keep = ctrl;
+    EventRegistrationToken tok;
+    web->add_NavigationCompleted(
+        Callback<ICoreWebView2NavigationCompletedEventHandler>(
+            [keep, hwnd](ICoreWebView2 *, ICoreWebView2NavigationCompletedEventArgs *) -> HRESULT {
+                if (g_live.count(hwnd)) take_focus(keep.Get(), hwnd);
+                return S_OK;
+            })
+            .Get(),
+        &tok);
 }
 
 static std::wstring page_url(const std::wstring &name, bool dark) {
