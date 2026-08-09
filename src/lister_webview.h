@@ -1,23 +1,20 @@
-// Shared host for Total Commander Lister plugins that preview a file by pointing
-// a WebView2 control at a local page. Everything in lister_webview.cpp is
-// format-agnostic; a plugin supplies this struct and nothing else.
-//
-// The page is served from https://<assetHost>/<page>, and the folder the previewed
-// file lives in from https://<fileHost>/ (mapping the folder, not the file, is what
-// lets a document resolve its siblings - a .gltf its .bin, a .md its images).
-// It is navigated to as:
-//
-//   https://<assetHost>/<page>?theme=dark|light&src=https%3A%2F%2F<fileHost>%2F<name>
 #pragma once
 
-struct ListerPlugin {
-    const wchar_t *windowClass; // must be unique per plugin DLL
-    const wchar_t *dataDir;     // folder under %LOCALAPPDATA% for the WebView2 profile and log
-    const wchar_t *assetHost;   // virtual host for the plugin's own web\ folder
-    const wchar_t *fileHost;    // virtual host for the previewed file's folder
-    const wchar_t *page;        // page to navigate to, relative to assetHost
-    const char *detect;         // Lister detect string, e.g. "EXT=\"MD\""
+// The six values that differ between plugins in this family. The page is served
+// from https://<asset_host>/<page>, and the folder the previewed file lives in
+// from https://<file_host>/ - mapping the folder rather than the file is what
+// lets a document resolve its siblings. The page is navigated to as
+//
+//   https://<asset_host>/<page>?theme=dark|light&src=https%3A%2F%2F<file_host>%2F<name>
+//
+// and reports its result by setting document.title to "ok: …" or "err: …".
+struct lister_plugin {
+    const wchar_t *window_class;
+    const wchar_t *data_dir;
+    const wchar_t *asset_host;
+    const wchar_t *file_host;
+    const wchar_t *page;
+    const char *detect;
 };
 
-// Defined by the plugin, consumed by lister_webview.cpp.
-extern const ListerPlugin ListerConfig;
+extern const lister_plugin lister_config;

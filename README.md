@@ -22,7 +22,7 @@ Used as a submodule at `core/` by
 ```cpp
 #include "lister_webview.h"
 
-const ListerPlugin ListerConfig = {
+const lister_plugin lister_config = {
     L"MdListerWnd",       // window class, unique per DLL
     L"md_wlx",            // %LOCALAPPDATA% folder for the WebView2 profile and log
     L"md-assets.invalid", // virtual host for the plugin's web\ folder
