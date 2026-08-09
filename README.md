@@ -12,8 +12,8 @@ hosting a WebView2 control and pointing it at a local page:
 - [devserver.js](devserver.js) — serves the staged viewer to a normal browser.
 
 Used as a submodule at `core/` by
-[gltf-lister](https://github.com/blippyblip/gltf_viewer) and
-[md-lister](https://github.com/blippyblip/md_viewer).
+[tc_lister_3d](https://github.com/blippyblip/tc_lister_3d) and
+[tc_lister_md](https://github.com/blippyblip/tc_lister_md).
 
 ## Writing a plugin against it
 
@@ -24,7 +24,7 @@ Used as a submodule at `core/` by
 
 const lister_plugin lister_config = {
     L"MdListerWnd",       // window class, unique per DLL
-    L"md_wlx",            // %LOCALAPPDATA% folder for the WebView2 profile and log
+    L"tc_lister_md",      // %LOCALAPPDATA% folder for the WebView2 profile and log
     L"md-assets.invalid", // virtual host for the plugin's web\ folder
     L"md-file.invalid",   // virtual host for the previewed file's folder
     L"viewer.html",
@@ -32,14 +32,14 @@ const lister_plugin lister_config = {
 };
 ```
 
-The rest of the plugin is `res/` (the page), `src/<name>_wlx.rc`,
+The rest of the plugin is `res/` (the page), `src/<name>.rc`,
 `src/pluginst.inf`, and a `fetch-deps.ps1` that calls `core\fetch-wv2.ps1` and
 then downloads whatever the page needs into `vendor\<lib>\`. Every `vendor\`
 folder except `wv2` is copied into the installed plugin's `web\`, so the page can
 reach them as siblings.
 
 The page is loaded as
-`https://<assetHost>/<page>?theme=dark|light&src=<url of the file>` and reports
+`https://<asset_host>/<page>?theme=dark|light&src=<url of the file>` and reports
 its result by setting `document.title` to `ok: …` or `err: …`, which the host
 mirrors onto its window for `test/host.cpp` to read.
 

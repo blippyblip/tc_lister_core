@@ -1,9 +1,9 @@
 @echo off
 rem Shared build for the Lister plugins in this family.
 rem   call core\build.cmd "%~dp0" <name>
-rem produces out\stage\<name>.wlx64 and out\<name>_wlx.zip in the plugin's root.
+rem produces out\stage\<name>.wlx64 and out\<name>.zip in the plugin's root.
 rem
-rem Expects, in the plugin root: src\*.cpp (the ListerConfig), src\<name>_wlx.rc,
+rem Expects, in the plugin root: src\*.cpp (the lister_config), src\<name>.rc,
 rem src\pluginst.inf, res\ (the viewer page), vendor\wv2 (WebView2 SDK) and any
 rem other vendor\<lib> folders, all of which are copied into the plugin's web\.
 rem Set VCVARS to override the Visual Studio detection.
@@ -46,13 +46,13 @@ if exist "%ROOT%out\stage\%NAME%.wlx64" (
 if exist "%ROOT%out\stage" rmdir /S /Q "%ROOT%out\stage"
 mkdir "%ROOT%out\stage" || exit /b 1
 
-rc /nologo /fo "%ROOT%out\%NAME%_wlx.res" "%ROOT%src\%NAME%_wlx.rc" || exit /b 1
+rc /nologo /fo "%ROOT%out\%NAME%.res" "%ROOT%src\%NAME%.rc" || exit /b 1
 
 cl /nologo /std:c++17 /EHsc /O2 /W4 /sdl /guard:cf /LD /MT ^
    /I "%ROOT%vendor\wv2\build\native\include" /I "%CORE%src" ^
    "%ROOT%src\*.cpp" "%CORE%src\lister_webview.cpp" ^
    /Fo:"%ROOT%out\\" /Fe:"%ROOT%out\stage\%NAME%.wlx64" ^
-   /link /DEF:"%CORE%src\lister.def" "%ROOT%out\%NAME%_wlx.res" ^
+   /link /DEF:"%CORE%src\lister.def" "%ROOT%out\%NAME%.res" ^
    /guard:cf /DYNAMICBASE /NXCOMPAT /HIGHENTROPYVA ^
    "%ROOT%vendor\wv2\build\native\x64\WebView2LoaderStatic.lib" ^
    user32.lib ole32.lib oleaut32.lib advapi32.lib shell32.lib version.lib gdi32.lib || exit /b 1
@@ -68,12 +68,12 @@ for /d %%d in ("%ROOT%vendor\*") do (
 copy /Y "%ROOT%src\pluginst.inf" "%ROOT%out\stage\" >nul
 if exist "%ROOT%LICENSE.md" copy /Y "%ROOT%LICENSE.md" "%ROOT%out\stage\" >nul
 if exist "%ROOT%THIRD-PARTY.md" copy /Y "%ROOT%THIRD-PARTY.md" "%ROOT%out\stage\" >nul
-del /Q "%ROOT%out\*.obj" "%ROOT%out\stage\*.exp" "%ROOT%out\stage\*.lib" "%ROOT%out\%NAME%_wlx.zip" 2>nul
+del /Q "%ROOT%out\*.obj" "%ROOT%out\stage\*.exp" "%ROOT%out\stage\*.lib" "%ROOT%out\%NAME%.zip" 2>nul
 
 powershell -NoProfile -Command ^
-  "Compress-Archive -Path '%ROOT%out\stage\*' -DestinationPath '%ROOT%out\%NAME%_wlx.zip' -Force" || exit /b 1
+  "Compress-Archive -Path '%ROOT%out\stage\*' -DestinationPath '%ROOT%out\%NAME%.zip' -Force" || exit /b 1
 
-echo Built %ROOT%out\stage\%NAME%.wlx64 and %ROOT%out\%NAME%_wlx.zip
+echo Built %ROOT%out\stage\%NAME%.wlx64 and %ROOT%out\%NAME%.zip
 exit /b 0
 
 :usage
