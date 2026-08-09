@@ -152,6 +152,22 @@ static bool use_dark_theme(int show_flags) {
     return mode == 1 || (mode == 2 && system_prefers_dark());
 }
 
+// F3 puts the plugin in a Lister window of its own; Ctrl+Q puts it in Total
+// Commander's quick view panel, where the file list must keep the focus or the
+// arrow keys stop moving between files. Only the first is ours to take.
+static bool inside_lister_window(HWND parent) {
+    HWND root = GetAncestor(parent, GA_ROOT);
+    wchar_t cls[64] = {0};
+    GetClassNameW(root, cls, ARRAYSIZE(cls));
+
+    static bool logged = false;
+    if (!logged) {
+        log_line(L"host window class %s", cls);
+        logged = true;
+    }
+    return wcscmp(cls, L"TLister") == 0;
+}
+
 static LRESULT CALLBACK wnd_proc(HWND hwnd, UINT msg, WPARAM wp, LPARAM lp) {
     view *v = (view *)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
     switch (msg) {
@@ -390,6 +406,13 @@ static void attach_webview(HWND hwnd, ICoreWebView2Controller *ctrl, ICoreWebVie
 
     HRESULT nav = web->Navigate(url.c_str());
     if (FAILED(nav)) log_line(L"Navigate 0x%08X", nav);
+
+    // Lister hands the window no focus of its own, so without this the first
+    // keystroke goes nowhere and every pane needs a click before it responds.
+    if (inside_lister_window(GetParent(hwnd))) {
+        SetFocus(hwnd);
+        ctrl->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
+    }
 }
 
 static std::wstring page_url(const std::wstring &name, bool dark) {
