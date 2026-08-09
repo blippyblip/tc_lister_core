@@ -216,6 +216,43 @@ static void contain_navigation(ICoreWebView2 *web) {
         &tok);
 }
 
+static bool on_our_hosts(const std::wstring &uri) {
+    if (!starts_with(uri, L"http://") && !starts_with(uri, L"https://")) return true;
+    return starts_with(uri, asset_origin()) || starts_with(uri, file_origin());
+}
+
+// The page's own CSP cannot reach inside a document the page frames, and a
+// framed file is exactly what the HTML and PDF plugins hand to the browser. This
+// stops every request that leaves the two virtual hosts at the host instead, so
+// containment does not depend on the previewed file cooperating.
+static void contain_requests(ICoreWebView2 *web, ICoreWebView2Environment *env) {
+    web->AddWebResourceRequestedFilter(L"*", COREWEBVIEW2_WEB_RESOURCE_CONTEXT_ALL);
+
+    ComPtr<ICoreWebView2Environment> owned = env;
+    EventRegistrationToken tok;
+    web->add_WebResourceRequested(
+        Callback<ICoreWebView2WebResourceRequestedEventHandler>(
+            [owned](ICoreWebView2 *, ICoreWebView2WebResourceRequestedEventArgs *a) -> HRESULT {
+                ComPtr<ICoreWebView2WebResourceRequest> request;
+                if (FAILED(a->get_Request(&request)) || !request) return S_OK;
+
+                LPWSTR uri = nullptr;
+                if (FAILED(request->get_Uri(&uri)) || !uri) return S_OK;
+                std::wstring u = uri;
+                CoTaskMemFree(uri);
+                if (on_our_hosts(u)) return S_OK;
+
+                ComPtr<ICoreWebView2WebResourceResponse> blocked;
+                if (SUCCEEDED(owned->CreateWebResourceResponse(nullptr, 403, L"Blocked", L"", &blocked))) {
+                    a->put_Response(blocked.Get());
+                }
+                log_line(L"blocked request to %s", u.c_str());
+                return S_OK;
+            })
+            .Get(),
+        &tok);
+}
+
 static void harden_settings(ICoreWebView2 *web) {
     ComPtr<ICoreWebView2Settings> s;
     if (FAILED(web->get_Settings(&s)) || !s) return;
@@ -314,8 +351,9 @@ static void log_failures(ICoreWebView2 *web) {
         &tok);
 }
 
-static void attach_webview(HWND hwnd, ICoreWebView2Controller *ctrl, const std::wstring &assets,
-                           const std::wstring &folder, const std::wstring &url) {
+static void attach_webview(HWND hwnd, ICoreWebView2Controller *ctrl, ICoreWebView2Environment *env,
+                           const std::wstring &assets, const std::wstring &folder,
+                           const std::wstring &url) {
     view *v = (view *)GetWindowLongPtrW(hwnd, GWLP_USERDATA);
     if (!v) {
         ctrl->Close();
@@ -334,6 +372,7 @@ static void attach_webview(HWND hwnd, ICoreWebView2Controller *ctrl, const std::
     map_virtual_hosts(web.Get(), assets, folder);
     harden_settings(web.Get());
     contain_navigation(web.Get());
+    contain_requests(web.Get(), env);
     forward_escape(ctrl, hwnd);
     mirror_title(web.Get(), hwnd);
     log_failures(web.Get());
@@ -358,25 +397,27 @@ static bool start_webview(HWND hwnd, const std::wstring &file, bool dark) {
     std::wstring assets = plugin_dir() + L"\\web";
     std::wstring url = page_url(name, dark);
 
-    auto on_controller = [hwnd, assets, folder, url](HRESULT hr, ICoreWebView2Controller *ctrl) -> HRESULT {
-        if (FAILED(hr) || !ctrl) {
-            log_line(L"controller creation 0x%08X", hr);
-            return S_OK;
-        }
-        if (!g_live.count(hwnd)) {
-            ctrl->Close();
-            return S_OK;
-        }
-        attach_webview(hwnd, ctrl, assets, folder, url);
-        return S_OK;
-    };
-
-    auto on_environment = [hwnd, on_controller](HRESULT hr, ICoreWebView2Environment *env) -> HRESULT {
+    auto on_environment = [hwnd, assets, folder, url](HRESULT hr, ICoreWebView2Environment *env) -> HRESULT {
         if (FAILED(hr) || !env) {
             log_line(L"environment creation 0x%08X", hr);
             return S_OK;
         }
         if (!g_live.count(hwnd)) return S_OK;
+
+        ComPtr<ICoreWebView2Environment> owned = env;
+        auto on_controller = [hwnd, owned, assets, folder, url](HRESULT hr,
+                                                                ICoreWebView2Controller *ctrl) -> HRESULT {
+            if (FAILED(hr) || !ctrl) {
+                log_line(L"controller creation 0x%08X", hr);
+                return S_OK;
+            }
+            if (!g_live.count(hwnd)) {
+                ctrl->Close();
+                return S_OK;
+            }
+            attach_webview(hwnd, ctrl, owned.Get(), assets, folder, url);
+            return S_OK;
+        };
 
         env->CreateCoreWebView2Controller(
             hwnd,
