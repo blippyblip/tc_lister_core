@@ -453,7 +453,16 @@ static void attach_webview(HWND hwnd, ICoreWebView2Controller *ctrl, ICoreWebVie
 
     // Lister hands the window no focus of its own, so without this the first
     // keystroke goes nowhere and every pane needs a click before it responds.
-    if (take_focus_setting() && inside_lister_window(GetParent(hwnd))) {
+    bool wanted = take_focus_setting();
+    bool lister = inside_lister_window(GetParent(hwnd));
+
+    static bool logged = false;
+    if (!logged) {
+        log_line(L"TakeFocus %d, own lister window %d", (int)wanted, (int)lister);
+        logged = true;
+    }
+
+    if (wanted && lister) {
         SetFocus(hwnd);
         ctrl->MoveFocus(COREWEBVIEW2_MOVE_FOCUS_REASON_PROGRAMMATIC);
     }
