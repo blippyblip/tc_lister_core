@@ -8,6 +8,15 @@
 #include "WebView2.h"
 #include "lister_webview.h"
 
+// Shared mechanisms, from relib. build.cmd puts relib's root on the include path (RELIB argument,
+// defaulting to vendor\relib). These four headers are deliberately C++17-clean so a /std:c++17
+// plugin can include them without the rest of relib; the namespace alias keeps call sites short.
+#include <win32/dark_mode.h>
+#include <win32/ini_settings.h>
+#include <win32/paths.h>
+
+namespace rw = re::win32;
+
 using Microsoft::WRL::Callback;
 using Microsoft::WRL::ComPtr;
 
@@ -21,10 +30,6 @@ struct view {
     int focus_tries = 0;
 };
 
-static std::wstring dir_of(const std::wstring &path) {
-    size_t i = path.find_last_of(L"\\/");
-    return i == std::wstring::npos ? std::wstring() : path.substr(0, i);
-}
 
 static bool starts_with(const std::wstring &s, const std::wstring &prefix) {
     return s.compare(0, prefix.size(), prefix) == 0;
@@ -41,23 +46,11 @@ static const std::wstring &file_origin() {
 }
 
 static std::wstring plugin_dir() {
-    std::wstring buf(MAX_PATH, L'\0');
-    for (;;) {
-        DWORD n = GetModuleFileNameW(g_inst, buf.data(), (DWORD)buf.size());
-        if (n == 0) return std::wstring();
-        if (n < buf.size()) { buf.resize(n); break; }
-        buf.resize(buf.size() * 2);
-    }
-    return dir_of(buf);
+    return rw::dir_of(rw::module_path(g_inst));
 }
 
 static std::wstring user_data_dir() {
-    wchar_t buf[MAX_PATH];
-    DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
-    if (n == 0 || n >= MAX_PATH) return std::wstring();
-    std::wstring dir = std::wstring(buf) + L"\\" + lister_config.data_dir;
-    CreateDirectoryW(dir.c_str(), nullptr);
-    return dir;
+    return rw::app_data_dir(lister_config.data_dir);
 }
 
 static HANDLE open_log(const std::wstring &dir) {
@@ -101,16 +94,7 @@ static void log_line(const wchar_t *fmt, ...) {
     CloseHandle(f);
 }
 
-static std::wstring local_app_data() {
-    wchar_t buf[MAX_PATH];
-    DWORD n = GetEnvironmentVariableW(L"LOCALAPPDATA", buf, MAX_PATH);
-    return (n == 0 || n >= MAX_PATH) ? std::wstring() : buf;
-}
 
-static int setting(const std::wstring &dir, const wchar_t *key, int fallback) {
-    if (dir.empty()) return fallback;
-    return GetPrivateProfileIntW(L"lister", key, fallback, (dir + L"\\config.ini").c_str());
-}
 
 // Written once so the file is there to be found and edited; GetPrivateProfileInt
 // would fall back to the same defaults without it.
@@ -118,51 +102,35 @@ static void seed_config() {
     std::wstring dir = user_data_dir();
     if (dir.empty()) return;
 
-    std::wstring path = dir + L"\\config.ini";
-    HANDLE f = CreateFileW(path.c_str(), GENERIC_WRITE, 0, nullptr, CREATE_NEW,
-                           FILE_ATTRIBUTE_NORMAL, nullptr);
-    if (f == INVALID_HANDLE_VALUE) return;
-
-    static const char text[] =
-        "; Settings for this plugin. Delete a line to go back to its default.\r\n"
-        "; A file at %LOCALAPPDATA%\\tc_lister\\config.ini sets the default for\r\n"
-        "; every plugin in the family; this one overrides it for this plugin.\r\n"
-        "\r\n"
-        "[lister]\r\n"
-        "; Take the keyboard focus when the pane opens, so the first key works\r\n"
-        "; without clicking into it. Never applies to quick view.\r\n"
-        "TakeFocus=1\r\n";
-    DWORD written;
-    WriteFile(f, text, sizeof text - 1, &written, nullptr);
-    CloseHandle(f);
+    // The comments are the reason to seed at all: GetPrivateProfileInt would fall back to the same
+    // defaults with no file to edit. Written once through relib, and never over an existing file.
+    static const wchar_t seed[] =
+        L"; Settings for this plugin. Delete a line to go back to its default.\r\n"
+        L"; A file at %LOCALAPPDATA%\\tc_lister\\config.ini sets the default for\r\n"
+        L"; every plugin in the family; this one overrides it for this plugin.\r\n"
+        L"\r\n"
+        L"[lister]\r\n"
+        L"; Take the keyboard focus when the pane opens, so the first key works\r\n"
+        L"; without clicking into it. Never applies to quick view.\r\n"
+        L"TakeFocus=1\r\n";
+    const std::wstring path = dir + L"\\config.ini";
+    if (!rw::ini_settings(path, seed).seed_if_missing()) {
+        // relib reports this; the previous version could not, so a config.ini that could never be
+        // created was indistinguishable from one already present.
+        log_line(L"seed_config: could not create %s", path.c_str());
+    }
 }
 
 static bool take_focus_setting() {
-    int shared = setting(local_app_data() + L"\\tc_lister", L"TakeFocus", 1);
-    return setting(user_data_dir(), L"TakeFocus", shared) != 0;
+    // The family-wide file supplies the default and this plugin's own file overrides it. That
+    // cascade is the `fallback` argument, not a separate mechanism.
+    const rw::ini_settings family(rw::local_app_data() + L"\\tc_lister\\config.ini");
+    const int shared = family.get_int(L"lister", L"TakeFocus", 1);
+    const rw::ini_settings mine(user_data_dir() + L"\\config.ini");
+    return mine.get_int(L"lister", L"TakeFocus", shared) != 0;
 }
 
-static std::string to_utf8(const std::wstring &s) {
-    int n = WideCharToMultiByte(CP_UTF8, 0, s.c_str(), (int)s.size(), nullptr, 0, nullptr, nullptr);
-    if (n <= 0) return std::string();
-    std::string out(n, '\0');
-    WideCharToMultiByte(CP_UTF8, 0, s.c_str(), (int)s.size(), out.data(), n, nullptr, nullptr);
-    return out;
-}
 
-static std::wstring url_encode(const std::wstring &s) {
-    std::wstring out;
-    for (unsigned char c : to_utf8(s)) {
-        if (isalnum(c) || strchr("-_.~", c)) {
-            out += (wchar_t)c;
-        } else {
-            wchar_t hex[4];
-            StringCchPrintfW(hex, ARRAYSIZE(hex), L"%%%02X", c);
-            out += hex;
-        }
-    }
-    return out;
-}
 
 static std::wstring commander_ini() {
     wchar_t buf[MAX_PATH];
@@ -173,13 +141,6 @@ static std::wstring commander_ini() {
     return std::wstring();
 }
 
-static bool system_prefers_dark() {
-    DWORD light = 1, size = sizeof light;
-    RegGetValueW(HKEY_CURRENT_USER,
-                 L"Software\\Microsoft\\Windows\\CurrentVersion\\Themes\\Personalize",
-                 L"AppsUseLightTheme", RRF_RT_REG_DWORD, nullptr, &light, &size);
-    return light == 0;
-}
 
 static bool use_dark_theme(int show_flags) {
     static bool logged = false;
@@ -191,7 +152,7 @@ static bool use_dark_theme(int show_flags) {
 
     std::wstring ini = commander_ini();
     UINT mode = ini.empty() ? 0 : GetPrivateProfileIntW(L"Configuration", L"DarkMode", 0, ini.c_str());
-    return mode == 1 || (mode == 2 && system_prefers_dark());
+    return mode == 1 || (mode == 2 && rw::dark::system_prefers_dark());
 }
 
 // Quick view returns the focus to the file list itself - that is Total
@@ -546,14 +507,14 @@ static void attach_webview(HWND hwnd, ICoreWebView2Controller *ctrl, ICoreWebVie
 // is what the PDF viewer needs: as a framed document it never takes the keyboard
 // focus without being clicked, and as the top-level one it always does.
 static std::wstring page_url(const std::wstring &name, bool dark) {
-    if (!lister_config.page) return file_origin() + url_encode(name);
+    if (!lister_config.page) return file_origin() + rw::url_encode(name);
 
     return asset_origin() + lister_config.page + L"?theme=" + (dark ? L"dark" : L"light") +
-           L"&src=" + url_encode(file_origin() + name);
+           L"&src=" + rw::url_encode(file_origin() + name);
 }
 
 static bool start_webview(HWND hwnd, const std::wstring &file, bool dark) {
-    std::wstring folder = dir_of(file);
+    std::wstring folder = rw::dir_of(file);
     std::wstring name = folder.empty() ? file : file.substr(folder.size() + 1);
     if (folder.empty() || name.empty()) {
         log_line(L"cannot split path %s", file.c_str());
@@ -605,7 +566,8 @@ static bool register_window_class() {
     static bool registered = false;
     if (registered) return true;
 
-    WNDCLASSEXW wc = {sizeof wc};
+    WNDCLASSEXW wc{};
+    wc.cbSize = sizeof wc;
     wc.lpfnWndProc = wnd_proc;
     wc.hInstance = g_inst;
     wc.hCursor = LoadCursor(nullptr, IDC_ARROW);

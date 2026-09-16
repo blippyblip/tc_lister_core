@@ -1,15 +1,21 @@
 @echo off
 rem Shared build for the Lister plugins in this family.
-rem   call core\build.cmd "%~dp0" <name>
+rem   call core\build.cmd "%~dp0" <name> ["<relib root>"]
 rem produces out\stage\<name>.wlx64 and out\<name>.zip in the plugin's root.
 rem
 rem Expects, in the plugin root: src\*.cpp (the lister_config), src\<name>.rc,
 rem src\pluginst.inf, res\ (the viewer page), vendor\wv2 (WebView2 SDK) and any
 rem other vendor\<lib> folders, all of which are copied into the plugin's web\.
+rem
+rem The third argument is relib's root, for the headers this core shares with it (win32 dark mode,
+rem paths, INI settings). It defaults to <root>\vendor\relib, which is where a relib submodule would
+rem sit -- the same arrangement as vendor\wv2. Pass it explicitly to build against a checkout
+rem somewhere else.
 rem Set VCVARS to override the Visual Studio detection.
 setlocal
 set "ROOT=%~1"
 set "NAME=%~2"
+set "RELIB=%~3"
 set "CORE=%~dp0"
 if not defined ROOT goto :usage
 if not defined NAME goto :usage
@@ -30,6 +36,13 @@ call "%VCVARS%" >nul || exit /b 1
 
 if not exist "%ROOT%vendor\wv2\build\native\include\WebView2.h" (
   echo Missing dependencies - run fetch-deps.cmd first.
+  exit /b 1
+)
+
+if not defined RELIB set "RELIB=%ROOT%vendor\relib"
+if not exist "%RELIB%\win32\dark_mode.h" (
+  echo Missing relib. Pass its root as the third argument, or put a checkout at vendor\relib.
+  echo   call core\build.cmd "%%~dp0" %NAME% "C:\path\to\relib"
   exit /b 1
 )
 
@@ -59,7 +72,7 @@ mkdir "%ROOT%out\stage" || exit /b 1
 rc /nologo /fo "%ROOT%out\%NAME%.res" "%ROOT%src\%NAME%.rc" || exit /b 1
 
 cl /nologo /std:c++17 /EHsc /O2 /W4 /sdl /guard:cf /LD /MT ^
-   /I "%ROOT%vendor\wv2\build\native\include" /I "%CORE%src" ^
+   /I "%ROOT%vendor\wv2\build\native\include" /I "%CORE%src" /I "%RELIB%" ^
    "%ROOT%src\*.cpp" "%CORE%src\lister_webview.cpp" ^
    /Fo:"%ROOT%out\\" /Fe:"%ROOT%out\stage\%NAME%.wlx64" ^
    /link /DEF:"%CORE%src\lister.def" "%ROOT%out\%NAME%.res" ^
@@ -87,5 +100,5 @@ echo Built %ROOT%out\stage\%NAME%.wlx64 and %ROOT%out\%NAME%.zip
 exit /b 0
 
 :usage
-echo usage: core\build.cmd ^<plugin root^> ^<name^>
+echo usage: core\build.cmd ^<plugin root^> ^<name^> ["<relib root>"]
 exit /b 2
